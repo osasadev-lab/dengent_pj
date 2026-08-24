@@ -41,14 +41,70 @@ dengentはブラウザだけで完結するランチャーです。画面上の�
 - **同一セッションへの二重書き込み防止**：ターミナルが作業中の間にブラウザから返信を送ると会話ログが壊れるため、`IDLE`時のみ受付＋送信中ロックで排他制御
 - **レイテンシの実測**：hookクライアント自身の処理時間とネットワーク遅延を分離して計測し、体感ではなく数値でボトルネックを追えるようにしている
 
-## セットアップ
+## 利用までの手順
+
+dengentは自分のPC上でサーバーを立ち上げて使うローカルツールです（外部にデプロイして誰でもアクセスできる形にはまだ対応していません）。現状Windowsでの動作を前提としています。
+
+### 前提条件
+
+- Node.js（18以上推奨）
+- [Claude Code CLI](https://docs.claude.com/claude-code)がインストール・ログイン済みで、ターミナルから`claude`コマンドが使える状態になっていること
+
+### 1. リポジトリを取得して依存関係をインストール
 
 ```bash
+git clone https://github.com/osasadev-lab/dengent_pj.git
+cd dengent_pj
 npm install
+```
+
+### 2. Claude Codeのhooksを登録する
+
+dengentはClaude Codeの`hooks`機能を使って作業状況を検知するため、ユーザーレベルのグローバル設定ファイル`~/.claude/settings.json`（Windowsなら`%USERPROFILE%\.claude\settings.json`）にhooksを登録する必要があります。これによりPC上で起動するClaude Codeのセッション全体がdengentに観測されるようになります（dengent以外から起動したセッションは自動的に無視されます）。
+
+ファイルが無ければ新規作成し、既にある場合は`hooks`キーを以下の内容とマージしてください。`<dengent_pjへのパス>`は手順1でクローンした実際の絶対パスに置き換えてください（Windowsでもパス区切りは`/`のままで問題ありません）。
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/hook-relay.js", "timeout": 5 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/hook-relay.js", "timeout": 5 }] },
+      { "matcher": "Write|Edit|Bash", "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/permission-gate.js", "timeout": 120 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/hook-relay.js", "timeout": 5 }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/hook-relay.js", "timeout": 5 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/hook-relay.js", "timeout": 5 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node <dengent_pjへのパス>/.claude-avatar/hook-relay.js", "timeout": 5 }] }
+    ]
+  }
+}
+```
+
+- `hook-relay.js`は状態を観測してdengentへ転送するだけの軽量フック（Claude Code本体をブロックしない）
+- `permission-gate.js`はWrite/Edit/Bash実行前にブラウザでの許可待ちを行うフック（dengentが起動していないセッションには一切影響しない）
+- hooksは**セッション開始時にのみ読み込まれる**ため、設定変更後は新規にセッションを開始する必要があります（既存のターミナルセッションには反映されません）
+
+### 3. サーバーを起動する
+
+```bash
 npm start
 ```
 
-ブラウザで `http://127.0.0.1:4317/` を開くと、セッション開始パネルが表示されます。プロバイダ・ディレクトリ（📂ボタンで選択）・最初の指示を入力して「開始」を押すだけで、そのディレクトリに対するエージェントセッションがバックグラウンドで立ち上がります。セッションが増えるとカラムが自動で追加され、複数ディレクトリを並行して管理できます。
+`http://127.0.0.1:4317/` をブラウザで開くと、セッション開始パネルが表示されます。
+
+### 4. セッションを開始する
+
+プロバイダ（現状はClaude Codeのみ）・ディレクトリ（📂ボタンで選択）・最初の指示を入力して「開始」を押すと、そのディレクトリに対するエージェントセッションがバックグラウンドで立ち上がります。セッションが増えるとカラムが自動で追加され、複数ディレクトリを並行して管理できます。Write/Edit/Bashの実行前にはチャット上に許可/拒否ボタンが表示されるので、内容を確認して許可してください。
 
 デバッグログ（hookイベントの生データ・レイテンシ計測）は `?debug=1` を付けるか、画面右上の「🛠 デバッグ」ボタンで表示できます。
 
