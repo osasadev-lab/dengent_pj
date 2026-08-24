@@ -542,7 +542,7 @@ app.post('/start', (req, res) => {
     return res.status(400).json({ ok: false, error: 'text is required' });
   }
   if (!SUPPORTED_PROVIDERS.has(provider)) {
-    return res.status(400).json({ ok: false, error: `${provider}はまだ対応していません（近日対応予定）` });
+    return res.status(400).json({ ok: false, error: `${provider}はまだ対応していません（対応予定）` });
   }
   if (!CLAUDE_BIN) {
     return res.status(500).json({ ok: false, error: 'claude executable could not be resolved on this machine' });
