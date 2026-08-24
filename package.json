@@ -1,0 +1,16 @@
+{
+  "name": "dengent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Claude Code avatar visualization - Phase1 technical prototype",
+  "main": "server/relay-server.js",
+  "scripts": {
+    "start": "node server/relay-server.js",
+    "start:prod": "node -e \"process.env.NODE_ENV='production';require('./server/relay-server.js')\""
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pixi.js": "^8.20.0",
+    "ws": "^8.18.0"
+  }
+}

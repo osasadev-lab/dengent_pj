@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>dengent - Phase2 prototype</title>
+<style>
+  :root {
+    --idle: #6b7280;
+    --working: #2563eb;
+    --waiting: #dc2626;
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    height: 100vh;
+  }
+  .hidden { display: none !important; }
+
+  /* ページ全体のレイアウト：左に複数カラムのグリッド、右にデバッグパネル */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+  }
+  /* 右上のデバッグ切り替え（ページ全体で1つ、デプロイ後は出さない） */
+  #pageToolbar {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 20;
+  }
+  #debugToggle {
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+  }
+  #debugToggle:hover { background: rgba(255,255,255,0.18); }
+  #debugToggle.active { background: #dc2626; border-color: #dc2626; }
+
+  #columnsGrid {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+    display: grid;
+    grid-template-columns: repeat(3, 520px);
+    gap: 18px;
+    justify-content: center;
+    align-content: start;
+    padding: 56px 24px 24px;
+  }
+
+  /* 1カラム＝1セッション分のカード */
+  .column {
+    background: #111827;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 14px 12px;
+    position: relative;
+    height: 640px;
+    transition: background 0.6s ease;
+    overflow: hidden;
+  }
+  .column.state-IDLE { background: linear-gradient(160deg, #0f172a 0%, #1e293b 100%); }
+  .column.state-WORKING { background: linear-gradient(160deg, #0b2a5e 0%, #1d4ed8 100%); }
+  .column.state-WAITING_CONFIRMATION { background: linear-gradient(160deg, #4a0d0d 0%, #991b1b 100%); animation: pulse 1.1s infinite; }
+  @keyframes pulse {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.3); }
+  }
+
+  /* カラム右上のミニツールバー（デモ再生。開発モードのみ） */
+  .col-toolbar {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 10;
+    display: flex;
+    gap: 6px;
+  }
+  .col-toolbar button {
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .col-toolbar button:hover { background: rgba(255,255,255,0.18); }
+  .col-toolbar button.active { background: #dc2626; border-color: #dc2626; }
+  .demoButton { display: none; }
+  body.debug-on .demoButton { display: inline-block; }
+
+  /* PixiJSのcanvasをマウントするコンテナ（avatar.js参照）。
+     scale 1.0（等倍）で使うので、頭が上端で切れないよう高さに余裕を持たせる */
+  .avatarStage {
+    width: 380px;
+    height: 190px;
+    position: relative;
+    margin-top: 10px;
+  }
+  .avatarStage::after {
+    content: '';
+    position: absolute;
+    left: 50%; bottom: 32px;
+    width: 100px; height: 16px;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 70%);
+    pointer-events: none;
+  }
+
+  .stateLabel {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+
+  .avatarPickerToggle {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.06);
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .avatarPickerToggle:hover { background: rgba(255,255,255,0.14); color: var(--text); }
+  .avatarPicker { display: flex; gap: 6px; }
+  .avatarPicker button {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    border: 2px solid rgba(255,255,255,0.15);
+    background-color: rgba(255,255,255,0.05);
+    background-repeat: no-repeat;
+    image-rendering: pixelated;
+    cursor: pointer;
+    padding: 0;
+  }
+  .avatarPicker button:hover { border-color: rgba(255,255,255,0.4); }
+  .avatarPicker button.active { border-color: #60a5fa; box-shadow: 0 0 0 2px rgba(96,165,250,0.35); }
+
+  .metaRow { display: flex; align-items: center; gap: 8px; max-width: 100%; }
+  .meta { color: var(--muted); font-size: 10px; text-align: center; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+  .endSessionButton {
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(248,113,113,0.4);
+    background: rgba(248,113,113,0.1);
+    color: #fca5a5;
+    font-size: 10px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .endSessionButton:hover { background: rgba(248,113,113,0.2); }
+  .expandChatButton {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.06);
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .expandChatButton:hover { background: rgba(255,255,255,0.14); color: var(--text); }
+
+  /* チャットログ＋返信フォームのまとまり。モーダル拡大時にこのブロックごと
+     #chatModalSlotへ移動させる（同じDOM要素を移すだけなので、内容の複製・
+     イベントリスナーの再結線が不要で状態も自然に保たれる） */
+  .chatBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+  }
+  .chatBlockPlaceholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    border: 1px dashed rgba(255,255,255,0.15);
+    border-radius: 14px;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+
+  /* チャットログ */
+  .chatLog {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    position: relative;
+  }
+  .chatLog:empty::before {
+    content: 'ここにやり取りが表示されます';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--muted);
+    font-size: 11px;
+    opacity: 0.6;
+    white-space: nowrap;
+  }
+  .chat-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    max-width: 88%;
+    animation: chatRowIn 0.25s ease;
+  }
+  @keyframes chatRowIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .chat-row.claude { align-self: flex-start; }
+  .chat-row.user { align-self: flex-end; flex-direction: row-reverse; }
+  .chat-row.system { align-self: center; max-width: 100%; }
+
+  .chat-avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background-color: rgba(255,255,255,0.1);
+    background-repeat: no-repeat;
+    image-rendering: pixelated;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  .chat-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #fca5a5;
+    margin: 0 3px 2px;
+    letter-spacing: 0.02em;
+  }
+
+  .chat-bubble-wrap { display: flex; flex-direction: column; gap: 2px; }
+  .chat-row.user .chat-bubble-wrap { align-items: flex-end; }
+  .chat-row.system .chat-bubble-wrap { align-items: center; }
+
+  .chat-bubble {
+    padding: 7px 11px;
+    border-radius: 15px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  }
+  .chat-row.claude .chat-bubble {
+    background: #2a3140;
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-row.claude.notification .chat-bubble {
+    background: #7c2d12;
+    color: #fed7aa;
+    border: 1px solid rgba(252,165,165,0.3);
+  }
+  .chat-row.user .chat-bubble {
+    background: #06c755;
+    color: #ffffff;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-row.system .chat-bubble {
+    background: rgba(248,113,113,0.12);
+    color: #fca5a5;
+    border: 1px solid rgba(248,113,113,0.35);
+    text-align: center;
+    font-size: 11.5px;
+  }
+  .permission-bubble { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 11.5px; }
+  .permission-actions { display: flex; gap: 6px; margin-top: 4px; }
+  .permission-actions button {
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.2);
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+  .permissionAllowButton { background: rgba(34,197,94,0.18); color: #86efac; border-color: rgba(134,239,172,0.4); }
+  .permissionAllowButton:hover:not(:disabled) { background: rgba(34,197,94,0.3); }
+  .permissionDenyButton { background: rgba(248,113,113,0.15); color: #fca5a5; border-color: rgba(248,113,113,0.35); }
+  .permissionDenyButton:hover:not(:disabled) { background: rgba(248,113,113,0.28); }
+  .permission-actions button:disabled { opacity: 0.5; cursor: default; }
+  .permission-status { font-size: 10px; color: var(--muted); margin-top: 3px; min-height: 12px; }
+
+  .chat-time {
+    font-size: 9px;
+    color: var(--muted);
+    padding: 0 4px;
+  }
+
+  /* デバッグログパネル */
+  #debug {
+    width: 400px;
+    border-left: 1px solid #334155;
+    background: var(--panel);
+    display: none;
+    flex-direction: column;
+  }
+  body.debug-on #debug { display: flex; }
+  #debug h2 {
+    font-size: 14px; margin: 0; padding: 12px 16px;
+    border-bottom: 1px solid #334155; color: var(--muted);
+    font-weight: 500;
+  }
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+  }
+  .log-entry { padding: 6px 0; border-bottom: 1px solid #263349; }
+  .log-entry .t { color: var(--muted); }
+  .log-entry .ev { color: #93c5fd; font-weight: 600; }
+  .log-entry .detail { color: var(--text); }
+  .log-entry .latency { display: block; color: #fbbf24; font-size: 11px; margin-top: 2px; }
+  .log-entry summary { cursor: pointer; }
+  .log-entry summary::marker { color: var(--muted); }
+  .raw-json {
+    margin: 6px 0 0;
+    padding: 8px;
+    background: #0b1220;
+    border-radius: 6px;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #connStatus { padding: 8px 16px; font-size: 12px; }
+  #connStatus.connected { color: #4ade80; }
+  #connStatus.disconnected { color: #f87171; }
+
+  /* LINE風の入力バー（コンポーザー） */
+  .replyForm { display: flex; align-items: center; gap: 6px; width: 100%; flex-shrink: 0; }
+  .replyInput {
+    flex: 1;
+    padding: 9px 13px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 13px;
+    min-width: 0;
+  }
+  .replyInput:disabled { opacity: 0.4; cursor: not-allowed; }
+  .replyButton {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: #06c755;
+    color: white;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .replyButton:disabled { opacity: 0.4; cursor: not-allowed; }
+  .replyStatus { font-size: 11px; color: var(--muted); min-height: 14px; width: 100%; text-align: center; }
+  .replyStatus.error { color: #f87171; }
+  .replyWarning {
+    font-size: 9.5px;
+    color: var(--muted);
+    text-align: center;
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+
+  /* セッション開始パネル */
+  .startPanel {
+    width: 100%;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+  }
+  .startPanel h2 { font-size: 14px; font-weight: 700; margin: 0; }
+  .startPanel p { font-size: 11px; color: var(--muted); margin: 0 0 2px; line-height: 1.4; }
+  .providerRow {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    font-size: 11px;
+  }
+  .providerSelect {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .startCwd, .startMessage {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 12px;
+    min-width: 0;
+  }
+  /* フォルダ選択は📂ボタン経由のみ。手打ちでの誤入力（存在しないパス等）を防ぐ */
+  .startCwd[readonly] { cursor: pointer; color: var(--muted); }
+  .startCwd[readonly]:not(:placeholder-shown) { color: var(--text); }
+  .startButton {
+    padding: 9px 24px;
+    border-radius: 999px;
+    border: none;
+    background: #06c755;
+    color: white;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .startButton:disabled { opacity: 0.5; cursor: not-allowed; }
+  .startStatus { font-size: 11px; color: var(--muted); min-height: 14px; }
+  .startStatus.error { color: #f87171; }
+  .startCwdRow { display: flex; gap: 5px; width: 100%; }
+  .startCwdRow .startCwd { flex: 1; }
+  .pickDirectoryButton {
+    padding: 9px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .pickDirectoryButton:hover { background: rgba(255,255,255,0.16); }
+  .pickDirectoryButton:disabled { opacity: 0.5; cursor: not-allowed; }
+  .retryButton {
+    padding: 7px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .retryButton:hover { background: rgba(255,255,255,0.18); }
+
+  /* チャット拡大表示モーダル。ページに1つだけ存在し、開いたカラインの
+     .chatBlock（チャットログ＋返信フォーム一式）をDOM移動で丸ごと受け入れる */
+  #chatModalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 24px;
+  }
+  #chatModal {
+    width: min(760px, 92vw);
+    height: min(80vh, 820px);
+    background: #111827;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    padding: 18px;
+    gap: 10px;
+  }
+  #chatModalHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #chatModalTitle { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #chatModalClose {
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  #chatModalClose:hover { background: rgba(255,255,255,0.18); }
+  #chatModalSlot { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #chatModalSlot .chatLog { font-size: 14px; }
+  #chatModalSlot .chat-bubble { font-size: 14px; }
+</style>
+</head>
+<body>
+  <div id="main">
+    <div id="pageToolbar">
+      <button id="debugToggle" type="button">🛠 デバッグ</button>
+    </div>
+    <div id="columnsGrid"></div>
+  </div>
+  <div id="chatModalOverlay" class="hidden">
+    <div id="chatModal">
+      <div id="chatModalHeader">
+        <div id="chatModalTitle"></div>
+        <button id="chatModalClose" type="button">✕ 閉じる</button>
+      </div>
+      <div id="chatModalSlot"></div>
+    </div>
+  </div>
+  <div id="debug">
+    <h2>debug log (latency check)</h2>
+    <div id="connStatus" class="disconnected">disconnected</div>
+    <div id="log"></div>
+  </div>
+
+<script type="module">
+import { createAvatarStage, CHARACTERS, DEFAULT_CHARACTER_ID } from '/avatar.js';
+
+const columnsGridEl = document.getElementById('columnsGrid');
+const debugToggle = document.getElementById('debugToggle');
+const connStatusEl = document.getElementById('connStatus');
+const logEl = document.getElementById('log');
+
+// サーバーがHTML配信時に埋め込むワンタイムトークン
+const DENGENT_TOKEN = '__DENGENT_TOKEN__';
+// NODE_ENV=productionで起動されている場合はfalse
+const DENGENT_DEV_MODE = '__DENGENT_DEV__' === 'true';
+
+function setDebugVisible(on) {
+  document.body.classList.toggle('debug-on', on);
+  debugToggle.classList.toggle('active', on);
+}
+if (DENGENT_DEV_MODE) {
+  setDebugVisible(new URLSearchParams(location.search).has('debug'));
+  debugToggle.addEventListener('click', () => {
+    setDebugVisible(!document.body.classList.contains('debug-on'));
+  });
+} else {
+  debugToggle.classList.add('hidden');
+}
+
+function formatTime(date) {
+  return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+}
+
+// PreToolUseで渡されるtool_inputはツールごとに形が違うため、承認カード用に
+// 人間が読める1行へ要約する（長すぎる内容は省略）
+function summarizeToolCall(toolName, toolInput) {
+  const input = toolInput || {};
+  const truncate = (s, n) => (s.length > n ? s.slice(0, n) + '…' : s);
+  if (toolName === 'Bash') {
+    return truncate(String(input.command || ''), 200);
+  }
+  if (toolName === 'Write') {
+    return String(input.file_path || '(不明なファイル)');
+  }
+  if (toolName === 'Edit') {
+    return String(input.file_path || '(不明なファイル)');
+  }
+  return toolName;
+}
+
+// アバター選択・最後に使ったディレクトリはカラム間で共有するデフォルト値として保存する
+const AVATAR_STORAGE_KEY = 'dengent.selectedCharacterId';
+const START_CWD_STORAGE_KEY = 'dengent.lastStartCwd';
+function loadSavedCharacterId() {
+  try {
+    const saved = localStorage.getItem(AVATAR_STORAGE_KEY);
+    return saved && CHARACTERS[saved] ? saved : DEFAULT_CHARACTER_ID;
+  } catch { return DEFAULT_CHARACTER_ID; }
+}
+function saveCharacterId(id) {
+  try { localStorage.setItem(AVATAR_STORAGE_KEY, id); } catch { /* 無視してよい */ }
+}
+function loadSavedCwd() {
+  try { return localStorage.getItem(START_CWD_STORAGE_KEY) || ''; } catch { return ''; }
+}
+function saveCwd(cwd) {
+  try { localStorage.setItem(START_CWD_STORAGE_KEY, cwd); } catch { /* 無視してよい */ }
+}
+
+const DEMO_SCENES = [
+  { state: 'IDLE', subagentCount: 0, wait: 1800 },
+  { state: 'WORKING', subagentCount: 0, wait: 1400 },
+  { state: 'WORKING', subagentCount: 1, wait: 900 },
+  { state: 'WORKING', subagentCount: 2, wait: 900 },
+  { state: 'WORKING', subagentCount: 3, wait: 1600 },
+  { state: 'WORKING', subagentCount: 1, wait: 700 },
+  { state: 'WORKING', subagentCount: 0, wait: 600 },
+  { state: 'WAITING_CONFIRMATION', subagentCount: 0, notification: 'Bashコマンドの実行許可が必要です', wait: 2600 },
+  { state: 'IDLE', subagentCount: 0, lastMessage: '3件のタスクが完了しました。次の指示をお待ちしています。', wait: 3200 },
+];
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+let columnSeq = 0;
+
+// ============================================================
+// 1カラム＝1セッション分のUIとロジックをまとめて作る。
+// 複数ディレクトリ・複数プロバイダを同時に扱えるようにするため、
+// 元は1インスタンスだけだったアバター/チャット/開始パネルのロジックを
+// カラムごとに独立させたファクトリ関数にしている（2026-08-23の方針転換）。
+// ============================================================
+function createColumn() {
+  const seq = ++columnSeq;
+  const root = document.createElement('div');
+  root.className = 'column state-IDLE';
+  root.innerHTML = `
+    <div class="col-toolbar">
+      <button class="demoButton" type="button">▶ デモ</button>
+    </div>
+    <div class="avatarStage"></div>
+    <button class="avatarPickerToggle" type="button">🎭</button>
+    <div class="avatarPicker hidden" role="radiogroup" aria-label="アバターを選択"></div>
+    <div class="stateLabel">IDLE</div>
+    <div class="metaRow">
+      <div class="meta">未起動</div>
+      <button class="expandChatButton hidden" type="button" title="チャットを拡大表示">⤢</button>
+      <button class="endSessionButton hidden" type="button">🔌 切る</button>
+    </div>
+    <div class="startPanel">
+      <h2>セッションを開始</h2>
+      <p>プロバイダとディレクトリ、最初の指示を入力してください。</p>
+      <select class="providerSelect">
+        <option value="claude">Claude Code</option>
+        <option value="codex">Codex（近日対応）</option>
+      </select>
+      <div class="startCwdRow">
+        <input class="startCwd" type="text" placeholder="📂ボタンでフォルダを選択" autocomplete="off" readonly>
+        <button class="pickDirectoryButton" type="button">📂</button>
+      </div>
+      <input class="startMessage" type="text" placeholder="最初の指示を入力..." autocomplete="off">
+      <button class="startButton" type="button">開始</button>
+      <div class="startStatus"></div>
+    </div>
+    <div class="chatBlock">
+      <div class="chatLog hidden"></div>
+      <form class="replyForm hidden">
+        <input class="replyInput" type="text" placeholder="返信..." autocomplete="off" disabled>
+        <button class="replyButton" type="submit" disabled>➤</button>
+      </form>
+      <div class="replyStatus hidden"></div>
+      <div class="replyWarning hidden">⚠ ターミナルとは非同期です</div>
+    </div>
+    <div class="chatBlockPlaceholder hidden">🔍 チャットを拡大表示中です</div>
+  `;
+  columnsGridEl.appendChild(root);
+
+  const $ = (sel) => root.querySelector(sel);
+  const avatarStageEl = $('.avatarStage');
+  const avatarPickerToggleEl = $('.avatarPickerToggle');
+  const avatarPickerEl = $('.avatarPicker');
+  const stateLabelEl = $('.stateLabel');
+  const metaEl = $('.meta');
+  const expandChatButtonEl = $('.expandChatButton');
+  const endSessionButtonEl = $('.endSessionButton');
+  const startPanelEl = $('.startPanel');
+  const providerSelectEl = $('.providerSelect');
+  const startCwdEl = $('.startCwd');
+  const pickDirectoryButtonEl = $('.pickDirectoryButton');
+  const startMessageEl = $('.startMessage');
+  const startButtonEl = $('.startButton');
+  const startStatusEl = $('.startStatus');
+  const chatBlockEl = $('.chatBlock');
+  const chatBlockPlaceholderEl = $('.chatBlockPlaceholder');
+  const chatLogEl = $('.chatLog');
+  const replyFormEl = $('.replyForm');
+  const replyInputEl = $('.replyInput');
+  const replyButtonEl = $('.replyButton');
+  const replyStatusEl = $('.replyStatus');
+  const replyWarningEl = $('.replyWarning');
+  const demoButtonEl = $('.demoButton');
+
+  startCwdEl.value = loadSavedCwd();
+
+  const col = {
+    seq,
+    el: root,
+    chatBlockEl,
+    chatBlockPlaceholderEl,
+    launchId: null,
+    sessionId: null,
+    sessionStarted: false,
+    demoActive: false,
+    demoGeneration: 0,
+    lastRenderedMessage: null,
+    lastRenderedNotification: null,
+    avatarStage: null,
+    pendingSession: null,
+    currentCharacterId: loadSavedCharacterId(),
+    pendingPermissionEls: new Map(), // requestId -> {statusEl, allowBtn, denyBtn}
+  };
+
+  function isEmpty() { return !col.launchId && !col.sessionId && !col.sessionStarted; }
+  col.isEmpty = isEmpty;
+
+  // --- アバター初期化 ---
+  createAvatarStage(avatarStageEl, col.currentCharacterId, { scale: 1 }).then((stageApi) => {
+    col.avatarStage = stageApi;
+    buildAvatarPicker();
+    if (col.pendingSession) applyState(col.pendingSession);
+  });
+
+  function buildAvatarPicker() {
+    avatarPickerEl.innerHTML = '';
+    Object.entries(CHARACTERS).forEach(([id, cfg]) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = cfg.label;
+      btn.classList.toggle('active', id === col.currentCharacterId);
+      btn.style.backgroundImage = `url(${cfg.idle.url})`;
+      btn.style.backgroundSize = (cfg.idle.frames * 40) + 'px 40px';
+      btn.addEventListener('click', async () => {
+        if (!col.avatarStage) return;
+        await col.avatarStage.setCharacter(id);
+        col.currentCharacterId = id;
+        saveCharacterId(id);
+        buildAvatarPicker();
+      });
+      avatarPickerEl.appendChild(btn);
+    });
+  }
+  avatarPickerToggleEl.addEventListener('click', () => avatarPickerEl.classList.toggle('hidden'));
+
+  // --- チャットログ ---
+  function appendChatMessage(from, text, variant) {
+    const row = document.createElement('div');
+    row.className = 'chat-row ' + from + (variant === 'notification' ? ' notification' : '');
+
+    if (from === 'claude') {
+      const thumb = document.createElement('div');
+      thumb.className = 'chat-avatar';
+      const cfg = CHARACTERS[col.currentCharacterId];
+      thumb.style.backgroundImage = `url(${cfg.idle.url})`;
+      thumb.style.backgroundSize = (cfg.idle.frames * 24) + 'px 24px';
+      row.appendChild(thumb);
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-bubble-wrap';
+    if (variant === 'notification') {
+      const label = document.createElement('div');
+      label.className = 'chat-label';
+      label.textContent = '⚠ 確認が必要です';
+      wrap.appendChild(label);
+    }
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+    if (from !== 'system') {
+      const time = document.createElement('div');
+      time.className = 'chat-time';
+      time.textContent = formatTime(new Date());
+      wrap.appendChild(time);
+    }
+    row.appendChild(wrap);
+
+    chatLogEl.appendChild(row);
+    while (chatLogEl.children.length > 60) chatLogEl.removeChild(chatLogEl.firstChild);
+    chatLogEl.scrollTop = chatLogEl.scrollHeight;
+  }
+
+  function appendClaudeMessagesIfNew(session, state) {
+    if (session.lastMessage && session.lastMessage !== col.lastRenderedMessage) {
+      appendChatMessage('claude', session.lastMessage, null);
+    }
+    col.lastRenderedMessage = session.lastMessage || null;
+
+    if (state === 'WAITING_CONFIRMATION' && session.notification) {
+      if (session.notification !== col.lastRenderedNotification) {
+        appendChatMessage('claude', session.notification, 'notification');
+      }
+      col.lastRenderedNotification = session.notification;
+    } else {
+      col.lastRenderedNotification = null;
+    }
+  }
+
+  // --- Write/Edit/Bash許可リクエスト ---
+  // サーバー（PreToolUseフック経由）から「承認待ち」が来たら、チャットに
+  // 許可/拒否ボタン付きのカードを表示する。ボタンを押すとサーバー側で
+  // ブロックされているフックのHTTPリクエストにその決定が返され、
+  // Claude Codeがツール呼び出しを続行/中止する（実行計画.md「未決事項」の解消）。
+  function appendPermissionRequest(requestId, toolName, toolInput) {
+    const row = document.createElement('div');
+    row.className = 'chat-row claude notification';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'chat-avatar';
+    const cfg = CHARACTERS[col.currentCharacterId];
+    thumb.style.backgroundImage = `url(${cfg.idle.url})`;
+    thumb.style.backgroundSize = (cfg.idle.frames * 24) + 'px 24px';
+    row.appendChild(thumb);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-bubble-wrap';
+
+    const label = document.createElement('div');
+    label.className = 'chat-label';
+    label.textContent = '⚠ 実行の許可が必要です（' + toolName + '）';
+    wrap.appendChild(label);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble permission-bubble';
+    bubble.textContent = summarizeToolCall(toolName, toolInput);
+    wrap.appendChild(bubble);
+
+    const actions = document.createElement('div');
+    actions.className = 'permission-actions';
+    const allowBtn = document.createElement('button');
+    allowBtn.type = 'button';
+    allowBtn.className = 'permissionAllowButton';
+    allowBtn.textContent = '✅ 許可';
+    const denyBtn = document.createElement('button');
+    denyBtn.type = 'button';
+    denyBtn.className = 'permissionDenyButton';
+    denyBtn.textContent = '🚫 拒否';
+    actions.appendChild(allowBtn);
+    actions.appendChild(denyBtn);
+    wrap.appendChild(actions);
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'permission-status';
+    wrap.appendChild(statusEl);
+
+    row.appendChild(wrap);
+    chatLogEl.appendChild(row);
+    while (chatLogEl.children.length > 60) chatLogEl.removeChild(chatLogEl.firstChild);
+    chatLogEl.scrollTop = chatLogEl.scrollHeight;
+
+    async function sendDecision(decision) {
+      allowBtn.disabled = true;
+      denyBtn.disabled = true;
+      statusEl.textContent = '送信中...';
+      try {
+        const res = await fetch('/permission-decision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Dengent-Token': DENGENT_TOKEN },
+          body: JSON.stringify({ requestId, decision }),
+        });
+        if (!res.ok) throw new Error('failed');
+        statusEl.textContent = decision === 'allow' ? '✅ 許可しました' : '🚫 拒否しました';
+        actions.classList.add('hidden'); // 決定が確定したらボタンは閉じる（押し直せないようにする）
+      } catch {
+        statusEl.textContent = '❌ 送信に失敗しました（タイムアウトで自動拒否される場合があります）';
+        allowBtn.disabled = false;
+        denyBtn.disabled = false;
+      }
+    }
+    allowBtn.addEventListener('click', () => sendDecision('allow'));
+    denyBtn.addEventListener('click', () => sendDecision('deny'));
+
+    col.pendingPermissionEls.set(requestId, { actions, statusEl, allowBtn, denyBtn });
+  }
+
+  col.handlePermissionRequest = (msg) => {
+    if (col.demoActive) return;
+    appendPermissionRequest(msg.requestId, msg.toolName, msg.toolInput);
+  };
+
+  // ブラウザでボタンを押さず放置してタイムアウトした場合や、セッションを
+  // 切ったことで自動的に拒否扱いになった場合も、カードの見た目を更新する
+  col.handlePermissionResolved = (msg) => {
+    const entry = col.pendingPermissionEls.get(msg.requestId);
+    if (!entry) return;
+    col.pendingPermissionEls.delete(msg.requestId);
+    entry.allowBtn.disabled = true;
+    entry.denyBtn.disabled = true;
+    entry.actions.classList.add('hidden'); // 決定が確定したらボタンは閉じる
+    if (msg.reason === 'timeout') {
+      entry.statusEl.textContent = '⏱ タイムアウトのため自動的に拒否されました';
+    } else if (!entry.statusEl.textContent) {
+      entry.statusEl.textContent = msg.decision === 'allow' ? '✅ 許可しました' : '🚫 拒否しました';
+    }
+  };
+
+  // --- セッション開始済みへの切り替え ---
+  function markSessionStarted() {
+    if (col.sessionStarted) return;
+    col.sessionStarted = true;
+    startPanelEl.classList.add('hidden');
+    chatLogEl.classList.remove('hidden');
+    replyFormEl.classList.remove('hidden');
+    replyStatusEl.classList.remove('hidden');
+    replyWarningEl.classList.remove('hidden');
+    expandChatButtonEl.classList.remove('hidden');
+    endSessionButtonEl.classList.remove('hidden');
+    onColumnBecameNonEmpty();
+  }
+  expandChatButtonEl.addEventListener('click', () => openChatModal(col));
+
+  // --- サーバーからの状態をアバター/チャットへ反映 ---
+  function applyState(session) {
+    if (session.sessionId && session.sessionId !== 'demo') markSessionStarted();
+    if (!col.avatarStage) { col.pendingSession = session; return; }
+
+    col.sessionId = session.sessionId || col.sessionId;
+
+    const state = session.state || 'IDLE';
+    root.className = 'column state-' + state;
+    col.avatarStage.setState(state);
+    col.avatarStage.setSubagentCount(session.subagentCount || 0);
+    stateLabelEl.textContent = state;
+
+    const canReply = !col.demoActive && state === 'IDLE' && !session.pendingReply;
+    replyInputEl.disabled = !canReply;
+    replyButtonEl.disabled = !canReply;
+    replyStatusEl.textContent = session.pendingReply ? '送信中...' : '';
+    replyStatusEl.classList.remove('error');
+
+    appendClaudeMessagesIfNew(session, state);
+
+    metaEl.textContent = (session.provider || 'claude') + ' / ' + (session.cwd || '-');
+    metaEl.title = session.cwd || '';
+  }
+  col.applyState = applyState;
+
+  // --- サーバーからのupdate/launch-failedメッセージを受け取る入口 ---
+  col.handleUpdate = (msg) => {
+    if (col.demoActive) return;
+    if (msg.launchId) col.launchId = msg.launchId;
+    if (msg.session) applyState(msg.session);
+    if (msg.type === 'update') {
+      const raw = msg.raw || {};
+      const extra = raw.tool_name ? ('tool=' + raw.tool_name) : (raw.message ? ('msg="' + raw.message + '"') : '');
+      logEvent({ event: raw.hook_event_name || '?', detail: extra, latency: msg.latency, raw });
+    }
+  };
+
+  // 起動失敗の理由をチャット風に表示する共通処理。
+  // /startが同期的に400を返すケース（未対応プロバイダ・不正なパス等）と、
+  // サーバーがWS経由で後から知らせてくるケース（spawn失敗・タイムアウト）の
+  // 両方からここを呼ぶ（要望：「失敗したときはその原因をチャットで表示」）。
+  function showLaunchFailure(errorMessage) {
+    startButtonEl.disabled = false;
+    startCwdEl.disabled = false;
+    startMessageEl.disabled = false;
+    providerSelectEl.disabled = false;
+
+    if (col.sessionStarted) {
+      // 既にチャット画面に切り替わった後の失敗（まず無いはずだが念のため）
+      appendChatMessage('system', '❌ ' + errorMessage, null);
+      return;
+    }
+
+    startPanelEl.classList.add('hidden');
+    chatLogEl.classList.remove('hidden');
+    appendChatMessage('system', '❌ 起動に失敗しました\n' + errorMessage, null);
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'retryButton';
+    retry.textContent = '🔁 もう一度試す';
+    retry.addEventListener('click', () => {
+      chatLogEl.classList.add('hidden');
+      chatLogEl.innerHTML = '';
+      startStatusEl.textContent = '';
+      startStatusEl.classList.remove('error');
+      startPanelEl.classList.remove('hidden');
+      col.launchId = null;
+    });
+    const row = document.createElement('div');
+    row.style.textAlign = 'center';
+    row.appendChild(retry);
+    chatLogEl.appendChild(row);
+  }
+  col.showLaunchFailure = showLaunchFailure;
+
+  col.handleLaunchFailed = (msg) => showLaunchFailure(msg.error);
+
+  // --- セッションを切る ---
+  // 以前は「開始パネルに戻す」だけで空カラムとして残していたが、複数カラム
+  // 運用が前提になった今は使い終わったカラムをそのまま畳んで消す方が自然。
+  // ただしカラムが0枚にはならないよう、末尾の空カラムはremoveColumn内の
+  // ensureTrailingEmptyColumn()呼び出しで常に補充される（2026-08-24）。
+  async function endSession() {
+    if (!col.sessionId) return;
+    endSessionButtonEl.disabled = true;
+    try {
+      await fetch('/forget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Dengent-Token': DENGENT_TOKEN },
+        body: JSON.stringify({ sessionId: col.sessionId }),
+      });
+    } catch { /* クライアント側の削除は続行してよい */ }
+
+    removeColumn(col);
+  }
+  endSessionButtonEl.addEventListener('click', endSession);
+
+  // --- フォルダ選択 ---
+  async function pickDirectory() {
+    pickDirectoryButtonEl.disabled = true;
+    pickDirectoryButtonEl.textContent = '...';
+    try {
+      const res = await fetch('/pick-directory', { method: 'POST', headers: { 'X-Dengent-Token': DENGENT_TOKEN } });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      if (data.path) startCwdEl.value = data.path;
+    } catch (err) {
+      startStatusEl.textContent = 'フォルダ選択に失敗: ' + err.message;
+      startStatusEl.classList.add('error');
+    } finally {
+      pickDirectoryButtonEl.disabled = false;
+      pickDirectoryButtonEl.textContent = '📂';
+    }
+  }
+  pickDirectoryButtonEl.addEventListener('click', pickDirectory);
+  // フォルダ選択は📂ボタン経由のみ（要望）。readonlyの入力欄自体をクリックしても
+  // 同じダイアログが開くようにして、クリックできそうに見えるUXの違和感を無くす
+  startCwdEl.addEventListener('click', pickDirectory);
+
+  // --- セッション開始 ---
+  async function handleStart() {
+    const provider = providerSelectEl.value;
+    const cwd = startCwdEl.value.trim();
+    const text = startMessageEl.value.trim();
+    if (!cwd || !text) {
+      startStatusEl.textContent = 'ディレクトリと最初の指示の両方を入力してください';
+      startStatusEl.classList.add('error');
+      return;
+    }
+
+    startButtonEl.disabled = true;
+    startCwdEl.disabled = true;
+    startMessageEl.disabled = true;
+    providerSelectEl.disabled = true;
+    startStatusEl.textContent = '起動中...（初回は数秒かかります）';
+    startStatusEl.classList.remove('error');
+
+    // launchIdはここで先に発行し、fetch送信より前に同期的にこのカラムへ
+    // 登録しておく。そうしないと、サーバーからのHTTPレスポンスが届く前に
+    // 実プロセスのUserPromptSubmitがWebSocket経由で先に届いてしまい、
+    // まだlaunchIdを知らないこのカラムではなく新しい空カラムが作られて
+    // しまう（実機で発生：開始パネルが空のまま残り、チャットは別カラムに
+    // 表示される不具合の原因だった、2026-08-24）
+    const launchId = crypto.randomUUID().replace(/-/g, '');
+    col.launchId = launchId;
+    registerColumnByLaunchId(col);
+
+    try {
+      const res = await fetch('/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Dengent-Token': DENGENT_TOKEN },
+        body: JSON.stringify({ cwd, text, provider, launchId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      saveCwd(cwd);
+    } catch (err) {
+      columnsByLaunchId.delete(launchId);
+      col.launchId = null;
+      showLaunchFailure(err.message);
+    }
+  }
+  startButtonEl.addEventListener('click', handleStart);
+  startMessageEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleStart(); });
+
+  // --- 返信 ---
+  replyFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = replyInputEl.value.trim();
+    if (!text || !col.sessionId) return;
+
+    replyButtonEl.disabled = true;
+    replyInputEl.disabled = true;
+    replyStatusEl.textContent = '送信中...';
+    replyStatusEl.classList.remove('error');
+
+    try {
+      const res = await fetch('/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Dengent-Token': DENGENT_TOKEN },
+        body: JSON.stringify({ sessionId: col.sessionId, text }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      appendChatMessage('user', text, null);
+      replyInputEl.value = '';
+    } catch (err) {
+      replyStatusEl.textContent = '送信失敗: ' + err.message;
+      replyStatusEl.classList.add('error');
+      replyInputEl.disabled = false;
+      replyButtonEl.disabled = false;
+    }
+  });
+
+  // --- デモ再生（開発モードのみ表示） ---
+  async function runDemoLoop(generation) {
+    while (col.demoGeneration === generation) {
+      for (const scene of DEMO_SCENES) {
+        if (col.demoGeneration !== generation) return;
+        applyState({
+          sessionId: 'demo', provider: 'demo', cwd: 'デモ再生中',
+          state: scene.state, subagentCount: scene.subagentCount,
+          notification: scene.notification || null, lastMessage: scene.lastMessage || null,
+          pendingReply: false,
+        });
+        await sleep(scene.wait);
+      }
+    }
+  }
+  demoButtonEl.addEventListener('click', () => {
+    if (col.demoActive) {
+      col.demoActive = false;
+      col.demoGeneration++;
+      demoButtonEl.textContent = '▶ デモ';
+      demoButtonEl.classList.remove('active');
+    } else {
+      col.demoActive = true;
+      col.demoGeneration++;
+      demoButtonEl.textContent = '■ 停止';
+      demoButtonEl.classList.add('active');
+      runDemoLoop(col.demoGeneration);
+    }
+  });
+
+  return col;
+}
+
+// ============================================================
+// カラムのレジストリと、ページ全体で1本のWebSocket接続
+// ============================================================
+const columns = [];
+const columnsByLaunchId = new Map();
+
+function addColumn() {
+  const col = createColumn();
+  columns.push(col);
+  return col;
+}
+function registerColumnByLaunchId(col) {
+  if (col.launchId) columnsByLaunchId.set(col.launchId, col);
+}
+function ensureTrailingEmptyColumn() {
+  const last = columns[columns.length - 1];
+  if (!last || !last.isEmpty()) addColumn();
+}
+// 「切る」で押されたカラムをDOMごと削除する。カラムが0枚になることは無い
+// （末尾に必ず1つ空カラムを保つという既存の不変条件をここでも維持する）。
+function removeColumn(col) {
+  if (expandedColumn === col) closeChatModal();
+  const idx = columns.indexOf(col);
+  if (idx !== -1) columns.splice(idx, 1);
+  if (col.launchId) columnsByLaunchId.delete(col.launchId);
+  // PixiJSのcanvas/WebGLリソースを解放。オーバーフローバッジ用のText要素の
+  // 内部グリフテクスチャ管理でPixiJS自体が例外を投げるケースが実機で
+  // 確認された（2カラム目以降のdestroy()で"Cannot read properties of
+  // undefined (reading 'push')"）。ここで例外が漏れるとDOM削除や末尾の
+  // 空カラム補充まで止まってしまう＝「切るを押しても反応しない」バグの
+  // 直接の原因だったため、destroy失敗はカラム削除自体を妨げないようにする
+  // （2026-08-24）。
+  if (col.avatarStage) {
+    try { col.avatarStage.destroy(); } catch (err) { console.error('[dengent] avatarStage.destroy failed:', err); }
+  }
+  col.el.remove();
+  ensureTrailingEmptyColumn();
+}
+
+// ============================================================
+// チャット拡大モーダル。ページ全体で1つだけ存在し、開いたカラムの
+// .chatBlock（チャットログ＋返信フォーム一式）をDOM移動でそのまま
+// 受け入れる。複製ではなく同じ要素を動かすだけなので、メッセージ内容も
+// フォームの入力状態もイベントリスナーも一切失われない。
+// ============================================================
+const chatModalOverlayEl = document.getElementById('chatModalOverlay');
+const chatModalTitleEl = document.getElementById('chatModalTitle');
+const chatModalSlotEl = document.getElementById('chatModalSlot');
+const chatModalCloseEl = document.getElementById('chatModalClose');
+let expandedColumn = null;
+
+function openChatModal(col) {
+  if (expandedColumn === col) return;
+  if (expandedColumn) closeChatModal();
+  expandedColumn = col;
+  chatModalTitleEl.textContent = col.el.querySelector('.meta').textContent;
+  chatModalSlotEl.appendChild(col.chatBlockEl);
+  col.chatBlockPlaceholderEl.classList.remove('hidden');
+  chatModalOverlayEl.classList.remove('hidden');
+}
+function closeChatModal() {
+  if (!expandedColumn) return;
+  const col = expandedColumn;
+  // chatBlockはカラムテンプレート内で常に最後の要素なので、appendChildで
+  // 戻せば元の表示順のまま元のカラムに復元される
+  col.el.insertBefore(col.chatBlockEl, col.chatBlockPlaceholderEl);
+  col.chatBlockPlaceholderEl.classList.add('hidden');
+  expandedColumn = null;
+  chatModalOverlayEl.classList.add('hidden');
+}
+chatModalCloseEl.addEventListener('click', closeChatModal);
+chatModalOverlayEl.addEventListener('click', (ev) => {
+  if (ev.target === chatModalOverlayEl) closeChatModal(); // 背景クリックで閉じる
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && expandedColumn) closeChatModal();
+});
+// init再構築（ページ再読み込み時、複数セッションをまとめて復元する間）は
+// セッション1件ごとにensureTrailingEmptyColumnを走らせると、まだ追加していない
+// 後続セッション用のカラムより先に空カラムが挿入され、
+// [session1, 空, session2, 空]のように順序が崩れる。復元中はこの呼び出しを
+// 抑制し、全件復元し終えた後にまとめて1回だけ呼ぶ（2026-08-24 修正）。
+let reconstructing = false;
+function onColumnBecameNonEmpty() {
+  if (reconstructing) return;
+  ensureTrailingEmptyColumn();
+}
+
+function findColumnForMessage(msg) {
+  if (msg.launchId && columnsByLaunchId.has(msg.launchId)) return columnsByLaunchId.get(msg.launchId);
+  // launchIdでの解決に失敗した場合（別タブ/別ウィンドウ発のセッション等）は
+  // sessionIdで一致する既存カラムを探し、無ければ新規カラムを作って表示する
+  const sid = msg.sessionId || (msg.session && msg.session.sessionId);
+  if (sid) {
+    const found = columns.find((c) => c.sessionId === sid);
+    if (found) {
+      if (msg.launchId) columnsByLaunchId.set(msg.launchId, found);
+      return found;
+    }
+  }
+  const col = addColumn();
+  if (msg.launchId) columnsByLaunchId.set(msg.launchId, col);
+  return col;
+}
+
+function logEvent({ event, detail, latency, raw }) {
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString() + '.' + String(now.getMilliseconds()).padStart(3, '0');
+  const latencyStr = latency
+    ? `pipeline ${latency.pipelineLatencyMs}ms (hook ${latency.hookOverheadMs}ms + net ${latency.networkMs}ms)`
+    : 'latency: n/a';
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+  summary.innerHTML = '<span class="t">' + timeStr + '</span> '
+    + '<span class="ev">' + event + '</span> '
+    + '<span class="detail">' + detail + '</span>'
+    + '<span class="latency">' + latencyStr + '</span>';
+  const pre = document.createElement('pre');
+  pre.className = 'raw-json';
+  pre.textContent = JSON.stringify(raw, null, 2);
+  details.appendChild(summary);
+  details.appendChild(pre);
+  entry.appendChild(details);
+  logEl.prepend(entry);
+  while (logEl.childNodes.length > 200) logEl.removeChild(logEl.lastChild);
+}
+
+// リレーサーバー再起動でトークンが変わると永久に再接続できなくなるため、
+// 一度も接続成功しないまま連続で切断されたらページごとリロードする
+let consecutiveFailedConnects = 0;
+const RELOAD_AFTER_N_FAILURES = 3;
+let initialized = false;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(proto + '://' + location.hostname + ':4317/stream?token=' + encodeURIComponent(DENGENT_TOKEN));
+  let openedSuccessfully = false;
+
+  ws.onopen = () => {
+    openedSuccessfully = true;
+    consecutiveFailedConnects = 0;
+    connStatusEl.textContent = 'connected';
+    connStatusEl.className = 'connected';
+  };
+  ws.onclose = () => {
+    if (!openedSuccessfully) {
+      consecutiveFailedConnects++;
+      if (consecutiveFailedConnects >= RELOAD_AFTER_N_FAILURES) { location.reload(); return; }
+    }
+    connStatusEl.textContent = 'disconnected (retrying...)';
+    connStatusEl.className = 'disconnected';
+    setTimeout(connect, 1000);
+  };
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+
+    if (msg.type === 'init') {
+      if (!initialized) {
+        initialized = true;
+        // ページ読み込み時点で既にdengentが把握しているセッションがあれば、
+        // その数ぶんカラムを再構築する（他タブでの操作や再読み込みに対応）。
+        // 無ければ空カラムを1つだけ用意する
+        reconstructing = true;
+        (msg.sessions || []).forEach((session) => {
+          const col = addColumn();
+          if (session.launchId) { col.launchId = session.launchId; registerColumnByLaunchId(col); }
+          col.applyState(session); // アバター・チャット・メタ情報を現在の状態に合わせて反映
+        });
+        reconstructing = false;
+        ensureTrailingEmptyColumn();
+        // 保留中の承認リクエストがあれば、対応するカラムに承認カードを復元する
+        // （2026-08-24修正：これが無いと、承認要求のブロードキャストとブラウザの
+        // 接続タイミングがズレた場合にカードが二度と出ずタイムアウト拒否される）
+        (msg.pendingPermissions || []).forEach((pr) => {
+          const col = findColumnForMessage(pr);
+          col.handlePermissionRequest(pr);
+        });
+      }
+      return;
+    }
+
+    if (msg.type === 'launch-failed') {
+      const col = columnsByLaunchId.get(msg.launchId);
+      if (col) col.handleLaunchFailed(msg);
+      return;
+    }
+
+    if (msg.type === 'update') {
+      const col = findColumnForMessage(msg);
+      col.handleUpdate(msg);
+      return;
+    }
+
+    if (msg.type === 'permission-request') {
+      const col = findColumnForMessage(msg);
+      col.handlePermissionRequest(msg);
+      return;
+    }
+
+    if (msg.type === 'permission-resolved') {
+      const col = findColumnForMessage(msg);
+      col.handlePermissionResolved(msg);
+      return;
+    }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
