@@ -131,7 +131,3 @@ hooksは`~/.claude/settings.json`というグローバル設定に登録され�
 ## 使用アセット
 
 キャラクターアバターは[CraftPix.net](https://craftpix.net/)の無料素材（[Free Homeless Character Sprite Sheets Pixel Art](https://craftpix.net/freebies/free-homeless-character-sprite-sheets-pixel-art/)）を使用。商用利用可・クレジット表記不要のライセンス（[craftpix.net/file-licenses](https://craftpix.net/file-licenses/)で確認済み）。Free版は3種類のアバターから選択可能。
-
-## ステータス
-
-コア体験のMVP化フェーズ進行中。Claude Codeでの複数ディレクトリ並行運用・ブラウザ承認フローまで実装済み。次のマイルストーンはCodexプロバイダの実装。
