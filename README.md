@@ -108,6 +108,26 @@ npm start
 
 デバッグログ（hookイベントの生データ・レイテンシ計測）は `?debug=1` を付けるか、画面右上の「🛠 デバッグ」ボタンで表示できます。
 
+## アンインストール
+
+hooksは`~/.claude/settings.json`というグローバル設定に登録されるため、フォルダを削除しただけでは残ってしまいます。以下の順で片付けてください。
+
+### 1. サーバーを停止する
+
+`npm start`を実行しているターミナルで`Ctrl+C`。
+
+### 2. hooksの登録を削除する
+
+`~/.claude/settings.json`（Windowsなら`%USERPROFILE%\.claude\settings.json`）を開き、`"利用までの手順"`の手順2で追加した`command`が`dengent_pj/.claude-avatar/`を指しているエントリだけを削除してください。他のツール用に自分で追加した`hooks`やその他の設定（`theme`など）が同じファイルにある場合は、それらは残したままで構いません。
+
+全てのエントリを削除した後、`hooks`キーの中身が空になった場合は`hooks`キーごと削除して構いません。
+
+これを忘れてdengent_pjのフォルダだけを削除すると、以後Claude Codeのセッションで`node <消したはずのパス>/.claude-avatar/hook-relay.js`のようなコマンドが見つからずエラーになり続けるので、必ずhooksの削除を先に行ってください。
+
+### 3. リポジトリを削除する
+
+`dengent_pj`フォルダごと削除して問題ありません。Claude Code側の会話履歴（`claude --resume`で辿れるもの）はdengentとは独立して保存されているため、影響を受けません。
+
 ## 使用アセット
 
 キャラクターアバターは[CraftPix.net](https://craftpix.net/)の無料素材（[Free Homeless Character Sprite Sheets Pixel Art](https://craftpix.net/freebies/free-homeless-character-sprite-sheets-pixel-art/)）を使用。商用利用可・クレジット表記不要のライセンス（[craftpix.net/file-licenses](https://craftpix.net/file-licenses/)で確認済み）。Free版は3種類のアバターから選択可能。
