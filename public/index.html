@@ -87,29 +87,6 @@
     50% { filter: brightness(1.3); }
   }
 
-  /* カラム右上のミニツールバー（デモ再生。開発モードのみ） */
-  .col-toolbar {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 10;
-    display: flex;
-    gap: 6px;
-  }
-  .col-toolbar button {
-    padding: 5px 10px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.25);
-    background: rgba(255,255,255,0.08);
-    color: var(--text);
-    font-size: 11px;
-    cursor: pointer;
-  }
-  .col-toolbar button:hover { background: rgba(255,255,255,0.18); }
-  .col-toolbar button.active { background: #dc2626; border-color: #dc2626; }
-  .demoButton { display: none; }
-  body.debug-on .demoButton { display: inline-block; }
-
   /* PixiJSのcanvasをマウントするコンテナ（avatar.js参照）。
      scale 1.0（等倍）で使うので、頭が上端で切れないよう高さに余裕を持たせる */
   .avatarStage {
@@ -611,19 +588,6 @@ function saveCwd(cwd) {
   try { localStorage.setItem(START_CWD_STORAGE_KEY, cwd); } catch { /* 無視してよい */ }
 }
 
-const DEMO_SCENES = [
-  { state: 'IDLE', subagentCount: 0, wait: 1800 },
-  { state: 'WORKING', subagentCount: 0, wait: 1400 },
-  { state: 'WORKING', subagentCount: 1, wait: 900 },
-  { state: 'WORKING', subagentCount: 2, wait: 900 },
-  { state: 'WORKING', subagentCount: 3, wait: 1600 },
-  { state: 'WORKING', subagentCount: 1, wait: 700 },
-  { state: 'WORKING', subagentCount: 0, wait: 600 },
-  { state: 'WAITING_CONFIRMATION', subagentCount: 0, notification: 'Bashコマンドの実行許可が必要です', wait: 2600 },
-  { state: 'IDLE', subagentCount: 0, lastMessage: '3件のタスクが完了しました。次の指示をお待ちしています。', wait: 3200 },
-];
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
 let columnSeq = 0;
 
 // ============================================================
@@ -637,9 +601,6 @@ function createColumn() {
   const root = document.createElement('div');
   root.className = 'column state-IDLE';
   root.innerHTML = `
-    <div class="col-toolbar">
-      <button class="demoButton" type="button">▶ デモ</button>
-    </div>
     <div class="avatarStage"></div>
     <button class="avatarPickerToggle" type="button">🎭</button>
     <div class="avatarPicker hidden" role="radiogroup" aria-label="アバターを選択"></div>
@@ -700,7 +661,6 @@ function createColumn() {
   const replyButtonEl = $('.replyButton');
   const replyStatusEl = $('.replyStatus');
   const replyWarningEl = $('.replyWarning');
-  const demoButtonEl = $('.demoButton');
 
   startCwdEl.value = loadSavedCwd();
 
@@ -712,8 +672,6 @@ function createColumn() {
     launchId: null,
     sessionId: null,
     sessionStarted: false,
-    demoActive: false,
-    demoGeneration: 0,
     lastRenderedMessage: null,
     lastRenderedNotification: null,
     avatarStage: null,
@@ -886,7 +844,6 @@ function createColumn() {
   }
 
   col.handlePermissionRequest = (msg) => {
-    if (col.demoActive) return;
     appendPermissionRequest(msg.requestId, msg.toolName, msg.toolInput);
   };
 
@@ -923,7 +880,7 @@ function createColumn() {
 
   // --- サーバーからの状態をアバター/チャットへ反映 ---
   function applyState(session) {
-    if (session.sessionId && session.sessionId !== 'demo') markSessionStarted();
+    if (session.sessionId) markSessionStarted();
     if (!col.avatarStage) { col.pendingSession = session; return; }
 
     col.sessionId = session.sessionId || col.sessionId;
@@ -934,7 +891,7 @@ function createColumn() {
     col.avatarStage.setSubagentCount(session.subagentCount || 0);
     stateLabelEl.textContent = state;
 
-    const canReply = !col.demoActive && state === 'IDLE' && !session.pendingReply;
+    const canReply = state === 'IDLE' && !session.pendingReply;
     replyInputEl.disabled = !canReply;
     replyButtonEl.disabled = !canReply;
     replyStatusEl.textContent = session.pendingReply ? '送信中...' : '';
@@ -949,7 +906,6 @@ function createColumn() {
 
   // --- サーバーからのupdate/launch-failedメッセージを受け取る入口 ---
   col.handleUpdate = (msg) => {
-    if (col.demoActive) return;
     if (msg.launchId) col.launchId = msg.launchId;
     if (msg.session) applyState(msg.session);
     if (msg.type === 'update') {
@@ -1113,36 +1069,6 @@ function createColumn() {
       replyStatusEl.classList.add('error');
       replyInputEl.disabled = false;
       replyButtonEl.disabled = false;
-    }
-  });
-
-  // --- デモ再生（開発モードのみ表示） ---
-  async function runDemoLoop(generation) {
-    while (col.demoGeneration === generation) {
-      for (const scene of DEMO_SCENES) {
-        if (col.demoGeneration !== generation) return;
-        applyState({
-          sessionId: 'demo', provider: 'demo', cwd: 'デモ再生中',
-          state: scene.state, subagentCount: scene.subagentCount,
-          notification: scene.notification || null, lastMessage: scene.lastMessage || null,
-          pendingReply: false,
-        });
-        await sleep(scene.wait);
-      }
-    }
-  }
-  demoButtonEl.addEventListener('click', () => {
-    if (col.demoActive) {
-      col.demoActive = false;
-      col.demoGeneration++;
-      demoButtonEl.textContent = '▶ デモ';
-      demoButtonEl.classList.remove('active');
-    } else {
-      col.demoActive = true;
-      col.demoGeneration++;
-      demoButtonEl.textContent = '■ 停止';
-      demoButtonEl.classList.add('active');
-      runDemoLoop(col.demoGeneration);
     }
   });
 
